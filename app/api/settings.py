@@ -49,14 +49,22 @@ def update_setting(
         raise HTTPException(400, detail=f"Unknown setting key: {key}")
     value = body.value
     # Validate CIDR list items when updating scan scope.
-    if key == "extra_authorized_cidrs" and isinstance(value, list):
+    if key == "extra_authorized_cidrs":
         import ipaddress
 
+        if not isinstance(value, list) or len(value) > 256:
+            raise HTTPException(400, detail="Provide a list of at most 256 IP addresses or CIDRs")
+        normalized = []
         for cidr in value:
+            if not isinstance(cidr, str):
+                raise HTTPException(400, detail="Each network must be an IP address or CIDR string")
             try:
-                ipaddress.ip_network(str(cidr), strict=False)
+                network = str(ipaddress.ip_network(cidr.strip(), strict=False))
             except ValueError as exc:
                 raise HTTPException(400, detail=f"Invalid CIDR: {cidr}") from exc
+            if network not in normalized:
+                normalized.append(network)
+        value = normalized
     settings_service.set_setting(db, key, value)
     db.commit()
     record(db, "updated setting", resource="settings", user=user,
