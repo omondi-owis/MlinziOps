@@ -303,6 +303,7 @@ def parse_nmap_output(raw: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 def ping_host(ip: str, timeout: float = 2.0) -> tuple[bool, float | None]:
     """Lightweight TCP/ICMP reachability probe for a registered host."""
+    import errno
     import socket
     import time as _time
 
@@ -314,7 +315,7 @@ def ping_host(ip: str, timeout: float = 2.0) -> tuple[bool, float | None]:
     if ping:
         try:
             proc = subprocess.run(
-                [ping, "-c", "1", "-W", str(int(timeout * 1000)), ip],
+                [ping, "-n", "-c", "1", "-W", str(max(1, int(timeout))), ip],
                 capture_output=True, text=True, timeout=timeout + 1,
             )
             if proc.returncode == 0:
@@ -322,12 +323,14 @@ def ping_host(ip: str, timeout: float = 2.0) -> tuple[bool, float | None]:
         except (subprocess.TimeoutExpired, OSError):
             pass
     try:
-        _time.sleep(0)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((ip, 80))
-        sock.close()
-        if result == 0:
+        family = socket.AF_INET6 if ipaddress.ip_address(ip).version == 6 else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            result = sock.connect_ex((ip, 80))
+        # A refused connection is also a response: the endpoint (or an
+        # intervening reject device) is reachable even without a web server.
+        # A timeout/unreachable error does not prove the machine is powered off.
+        if result in (0, errno.ECONNREFUSED):
             return True, round((_time.monotonic() - start) * 1000, 1)
     except OSError:
         pass
